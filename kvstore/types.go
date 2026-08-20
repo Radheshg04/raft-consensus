@@ -1,5 +1,7 @@
 package kvstore
 
+import "sync"
+
 type Key string
 type Value interface{}
 
@@ -12,10 +14,11 @@ const (
 )
 
 type StateMachine struct {
+	mu    *sync.RWMutex
 	store map[Key]any
 }
 type Command struct {
-	op    Operation
+	Op    Operation
 	Key   Key
 	Value Value
 }

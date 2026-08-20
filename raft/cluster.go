@@ -19,9 +19,16 @@ const (
 type Cluster struct {
 	startOnce sync.Once
 	Nodes     []*Node
-	Network   map[int]chan RPC
-	pending   map[int]int // map[reqId]logIndex
+	reqSeq    uint
+	Network   map[int]chan RPC        // map[id]inbox
+	pending   map[uint]pendingRequest // map[reqId]logIndex
 	config    ServerConfig
+	mu        *sync.RWMutex
+}
+
+type pendingRequest struct {
+	logIndex int
+	resultCh chan kvstore.Result
 }
 
 type ServerConfig struct {
@@ -47,7 +54,8 @@ func InitializeCluster(config *ServerConfig) *Cluster {
 		config:  *config,
 		Nodes:   make([]*Node, config.NodeCount),
 		Network: make(map[int]chan RPC, config.NodeCount),
-		pending: make(map[int]int, config.RequestBuffer),
+		pending: make(map[uint]pendingRequest, config.RequestBuffer),
+		mu:      &sync.RWMutex{},
 	}
 	nodeCounter := 0
 	for nodeCounter < config.NodeCount {
@@ -66,32 +74,46 @@ func (c *Cluster) Start() {
 	})
 }
 
+func (c *Cluster) Shutdown() {
+	for _, node := range c.Nodes {
+		c.Kill(node)
+	}
+}
+
+func (c *Cluster) Kill(node *Node) {
+	c.mu.Lock()
+	delete(c.Network, node.id)
+	c.mu.Unlock()
+	node.inbox <- KillSignal{}
+}
+
 func (c *Cluster) InitializeNode(nodeId int) *Node {
 	n := Node{
 		id:           nodeId,
 		votedFor:     -1,
 		commitIndex:  -1,
 		lastApplied:  -1,
-		stateMachine: kvstore.New(),
+		StateMachine: kvstore.New(),
 		cluster:      c,
 		inbox:        make(chan RPC, c.config.NodeInboxSize), // initialize buffered channel so that leader does not stall on slow follower
 		nextIndex:    make([]int, c.config.NodeCount),
 		matchIndex:   make([]int, c.config.NodeCount),
-		mu:           &sync.Mutex{},
+		mu:           &sync.RWMutex{},
 	}
 
 	return &n
 }
 
-func (c *Cluster) InitializeClient(bufSize int) (clientInbox chan RPC) {
-	clientInbox = make(chan RPC, bufSize)
-	c.Network[-1] = clientInbox
-	return
-}
-
 func (c *Cluster) SendMessage(message RPC, id int) {
+	c.mu.RLock()
+	nodeInbox, ok := c.Network[id]
+	c.mu.RUnlock()
+
+	if !ok {
+		log.Printf("raft: dropped message to dead node %d", id)
+	}
 	select {
-	case c.Network[id] <- message:
+	case nodeInbox <- message:
 	default:
 		log.Printf("raft: dropped message to node %d, inbox full", id)
 	}
@@ -102,6 +124,12 @@ func (c *Cluster) AddNode(node *Node) {
 	c.Network[node.id] = node.inbox
 	c.Nodes[node.id] = node
 	node.cluster = c
+}
+
+func (c *Cluster) CancelReq(reqId uint) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.pending, reqId)
 }
 
 func (c *Cluster) WaitForElectLeader() *Node {

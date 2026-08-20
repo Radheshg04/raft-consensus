@@ -1,7 +1,5 @@
 package raft
 
-import "raftconsensus/kvstore"
-
 type RPC interface {
 	isRPC()
 }
@@ -42,19 +40,6 @@ type RequestVoteResponse struct {
 
 func (RequestVoteResponse) isRPC() {}
 
-type ClientRequest struct {
-	id  int
-	cmd kvstore.Command
-}
+type KillSignal struct{}
 
-func (ClientRequest) isRPC() {}
-
-type ClientResponse struct {
-	id       int
-	leaderId int
-	result   kvstore.Value
-	found    bool
-	success  bool
-}
-
-func (ClientResponse) isRPC() {}
+func (KillSignal) isRPC() {}

@@ -30,6 +30,7 @@ func (n *Node) becomeLeader(term int) {
 	n.votedFor = -1
 	n.currentTerm = term
 	n.state = Leader
+	n.leaderId = n.id
 
 	for i := range n.cluster.config.NodeCount {
 		n.nextIndex[i] = len(n.log)

@@ -15,6 +15,8 @@ func (n *Node) runFollower() {
 
 		case msg := <-n.inbox:
 			switch m := msg.(type) {
+			case KillSignal:
+				panic(m)
 			case AppendEntriesRequest:
 				if m.term < n.currentTerm ||
 					//check for out of bound log idx, then compare log's term
@@ -71,11 +73,6 @@ func (n *Node) runFollower() {
 						voteGranted: false,
 					}, m.candidateId)
 				}
-			case ClientRequest:
-				n.cluster.SendMessage(ClientResponse{
-					leaderId: n.leaderId,
-					success:  false,
-				}, -1)
 			}
 		}
 	}
