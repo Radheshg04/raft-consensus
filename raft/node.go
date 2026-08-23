@@ -1,6 +1,9 @@
 package raft
 
 import (
+	"context"
+	"fmt"
+	"log"
 	kvstore "raftconsensus/kvstore"
 	"sync"
 )
@@ -21,15 +24,64 @@ type Node struct {
 	id           int
 	inbox        chan RPC
 	state        State
-	stateMachine *kvstore.StateMachine
+	StateMachine *kvstore.StateMachine
 	cluster      *Cluster
 
 	// track for client requests
 	leaderId int
-	mu       *sync.Mutex
+	mu       *sync.RWMutex
+}
+
+func (c *Cluster) Submit(ctx context.Context, cmd *kvstore.Command) (<-chan kvstore.Result, error) {
+	leader := c.WaitForElectLeader()
+	if leader == nil {
+		return nil, fmt.Errorf("No leader")
+	}
+	id := c.nextRequestId()
+	resultCh := make(chan kvstore.Result, 1)
+
+	leader.mu.Lock()
+	defer leader.mu.Unlock()
+
+	log := LogEntry{
+		reqId: id,
+		cmd:   *cmd,
+		term:  leader.currentTerm,
+	}
+	leader.log = append(leader.log, log)
+
+	c.pending[id] = pendingRequest{
+		logIndex: len(leader.log) - 1,
+		resultCh: resultCh,
+	}
+
+	go func() {
+		<-ctx.Done()
+		c.CancelReq(id)
+	}()
+
+	return resultCh, nil
+}
+
+func (c *Cluster) nextRequestId() uint {
+	c.reqSeq++
+	return c.reqSeq
+}
+
+func (c *Cluster) getLeader() (*Node, error) {
+	for _, node := range c.Nodes {
+		if node.State() == Leader {
+			return node, nil
+		}
+	}
+	return nil, fmt.Errorf("No leader")
 }
 
 // getters for safe access
+func (n *Node) Id() int {
+	return n.id
+}
+
 func (n *Node) State() State {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -55,6 +107,11 @@ func (n *Node) LeaderId() int {
 }
 
 func (n *Node) Run() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Node %d is down.", n.id)
+		}
+	}()
 	for {
 		switch n.State() {
 		case Follower:

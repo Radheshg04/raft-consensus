@@ -17,10 +17,10 @@ func (n *Node) runLeader() {
 				if id != n.id {
 					prevLogIdx := n.nextIndex[id] - 1
 					prevLogTerm := -1
-					if prevLogIdx >= 0 && len(n.log) > prevLogIdx {
-						prevLogTerm = n.log[prevLogIdx].term
+					if prevLogIdx >= 0 && n.getLogLen() > prevLogIdx {
+						prevLogTerm = n.getLogTerm(prevLogIdx)
 					}
-					go n.cluster.SendMessage(AppendEntriesRequest{
+					n.cluster.SendMessage(AppendEntriesRequest{
 						term:         n.currentTerm,
 						leaderId:     n.id,
 						prevLogIndex: prevLogIdx,
@@ -33,12 +33,14 @@ func (n *Node) runLeader() {
 
 		case msg := <-n.inbox:
 			switch m := msg.(type) {
+			case KillSignal:
+				panic(m)
 			case AppendEntriesRequest:
 				if m.term > n.currentTerm {
 					n.becomeFollower(m.term)
 					return
 				}
-				go n.cluster.SendMessage(AppendEntriesResponse{
+				n.cluster.SendMessage(AppendEntriesResponse{
 					followerId: n.id,
 					currTerm:   n.currentTerm,
 					success:    false,
@@ -65,25 +67,19 @@ func (n *Node) runLeader() {
 					n.inbox <- m
 					return
 				}
-				go n.cluster.SendMessage(RequestVoteResponse{
+				n.cluster.SendMessage(RequestVoteResponse{
 					currTerm:    n.currentTerm,
 					voteGranted: false,
 				}, m.candidateId)
-			case ClientRequest:
-				log := LogEntry{
-					reqId: m.id,
-					cmd:   m.cmd,
-					term:  n.currentTerm,
-				}
-				n.log = append(n.log, log)
-				n.cluster.pending[m.id] = len(n.log) - 1
-				n.updateCommitIdx()
 			}
 		}
 	}
 }
 
 func (n *Node) updateCommitIdx() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
 	match := make([]int, n.cluster.config.NodeCount)
 	copy(match, n.matchIndex)
 	match[n.id] = len(n.log) - 1
@@ -99,20 +95,14 @@ func (n *Node) updateCommitIdx() {
 	}
 }
 
-func (n *Node) respondCommitted(results map[int]kvstore.Result) {
-	for id, logIdx := range n.cluster.pending {
-		if logIdx <= n.commitIndex {
-			resp := ClientResponse{
-				id:      id,
-				success: false,
-			}
-			if val, ok := results[id]; ok {
-				resp.result = val.Val
-				resp.found = val.Found
-				resp.success = true
-			}
-			n.cluster.SendMessage(resp, -1)
+func (n *Node) respondCommitted(results map[uint]kvstore.Result) {
+	for id, pending := range n.cluster.pending {
+		if pending.logIndex <= n.commitIndex {
+			n.mu.Lock()
+			pending.resultCh <- results[id]
+			close(pending.resultCh)
 			delete(n.cluster.pending, id)
+			n.mu.Unlock()
 		}
 	}
 }

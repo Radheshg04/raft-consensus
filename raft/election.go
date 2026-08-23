@@ -11,7 +11,7 @@ func (n *Node) startElection() (voteCount int) {
 
 	for id := range n.cluster.config.NodeCount {
 		if id != n.id {
-			go n.cluster.SendMessage(RequestVoteRequest{
+			n.cluster.SendMessage(RequestVoteRequest{
 				term:         n.currentTerm,
 				candidateId:  n.id,
 				lastLogIndex: n.lastLogIndex(),
@@ -27,6 +27,9 @@ func (n *Node) getElectionTimeout() time.Duration {
 }
 
 func (n *Node) logUptoDate(req RequestVoteRequest) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
 	prevlogTerm := n.lastLogTerm()
 	prevlogIdx := n.lastLogIndex()
 	if req.lastLogTerm != prevlogTerm {

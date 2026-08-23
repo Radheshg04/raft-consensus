@@ -1,13 +1,22 @@
 package kvstore
 
+import (
+	"maps"
+	"sync"
+)
+
 func New() *StateMachine {
 	return &StateMachine{
+		mu:    &sync.RWMutex{},
 		store: make(map[Key]any),
 	}
 }
 
 func (sm *StateMachine) Exec(cmd Command) (result Result) {
-	switch cmd.op {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	switch cmd.Op {
 	case GET:
 		result.Val, result.Found = sm.store[cmd.Key]
 
@@ -20,4 +29,13 @@ func (sm *StateMachine) Exec(cmd Command) (result Result) {
 		delete(sm.store, cmd.Key)
 	}
 	return
+}
+
+func (sm *StateMachine) Equal(leaderSm *StateMachine) bool {
+	sm.mu.RLock()
+	leaderSm.mu.RLock()
+	defer sm.mu.RUnlock()
+	defer leaderSm.mu.RUnlock()
+
+	return maps.Equal(sm.store, leaderSm.store)
 }
