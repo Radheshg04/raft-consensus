@@ -39,7 +39,3 @@ type RequestVoteResponse struct {
 }
 
 func (RequestVoteResponse) isRPC() {}
-
-type KillSignal struct{}
-
-func (KillSignal) isRPC() {}

@@ -33,14 +33,15 @@ func performOp(ctx context.Context, c *raft.Cluster, key kvstore.Key, value kvst
 		Value: value,
 	}
 
-	res, err := c.Submit(ctx, &cmd)
-	if err != nil {
-		return nil, err
-	}
+	resultCh, errCh := c.Submit(ctx, &cmd)
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case result := <-res:
+
+	case result := <-resultCh:
 		return &result, nil
+
+	case err := <-errCh:
+		return nil, err
 	}
 }

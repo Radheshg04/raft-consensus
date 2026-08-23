@@ -15,7 +15,7 @@ const (
 
 type StateMachine struct {
 	mu    *sync.RWMutex
-	store map[Key]any
+	store map[Key]Value
 }
 type Command struct {
 	Op    Operation

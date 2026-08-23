@@ -1,6 +1,8 @@
 package raft
 
-import "time"
+import (
+	"time"
+)
 
 func (n *Node) runFollower() {
 	electionTimer := time.NewTimer(n.getElectionTimeout())
@@ -9,14 +11,15 @@ func (n *Node) runFollower() {
 	for n.State() == Follower {
 
 		select {
+		case <-n.done:
+			return
+
 		case <-electionTimer.C:
 			n.becomeCandidate(n.currentTerm + 1)
 			return
 
 		case msg := <-n.inbox:
 			switch m := msg.(type) {
-			case KillSignal:
-				panic(m)
 			case AppendEntriesRequest:
 				if m.term < n.currentTerm ||
 					//check for out of bound log idx, then compare log's term
