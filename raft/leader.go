@@ -12,6 +12,9 @@ func (n *Node) runLeader() {
 
 	for n.State() == Leader {
 		select {
+		case <-n.done:
+			return
+
 		case <-heartbeatTicker.C:
 			for id := range n.cluster.config.NodeCount {
 				if id != n.id {
@@ -33,8 +36,6 @@ func (n *Node) runLeader() {
 
 		case msg := <-n.inbox:
 			switch m := msg.(type) {
-			case KillSignal:
-				panic(m)
 			case AppendEntriesRequest:
 				if m.term > n.currentTerm {
 					n.becomeFollower(m.term)
@@ -98,11 +99,11 @@ func (n *Node) updateCommitIdx() {
 func (n *Node) respondCommitted(results map[uint]kvstore.Result) {
 	for id, pending := range n.cluster.pending {
 		if pending.logIndex <= n.commitIndex {
-			n.mu.Lock()
-			pending.resultCh <- results[id]
-			close(pending.resultCh)
-			delete(n.cluster.pending, id)
-			n.mu.Unlock()
+			if res, ok := results[id]; ok {
+				pending.resultCh <- res
+				close(pending.resultCh)
+				delete(n.cluster.pending, id)
+			}
 		}
 	}
 }
